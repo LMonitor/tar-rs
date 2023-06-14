@@ -1,9 +1,14 @@
-//! Tar archive reader with slightly relaxed semantics (Send, LendingIterator)
-
 use std::io::{self, Read};
 use crate::{other, Header};
 
-/// Simple tar entries reader
+/// Tar archive reader with slightly relaxed semantics
+///
+/// It does not borrow from an `[Archive]` instance but owns the underlying `Read` instance instead
+/// and it is thread safe (`Send` + `Sync`).
+///
+/// Additionally, each entry borrows mutably from the `SimpleEntries` iterator so it is impossible
+/// to process the entries out of order (which could lead to data corruption).
+
 pub struct SimpleEntries<R> {
     obj: R,
     ignore_zeros: bool,
@@ -24,7 +29,8 @@ impl<R: Read> SimpleEntries<R> {
 /// A read-only view into an entry of an archive.
 pub struct SimpleEntry<'a, R: Read> {
     /// `Read` instance with the Entry contents
-    pub obj: std::io::Take<&'a mut R>,
+    obj: std::io::Take<&'a mut R>,
+
     /// Entry metadata
     pub header: Header,
     /// Entry size
@@ -40,6 +46,12 @@ impl<'a, R: Read> Drop for SimpleEntry<'a, R> {
                 break;
             }
         }
+    }
+}
+
+impl<'a, R: Read> Read for SimpleEntry<'a, R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        self.obj.read(into)
     }
 }
 
@@ -143,7 +155,7 @@ mod tests {
             let mut a = entries.next().expect("expected entry a present").unwrap();
             assert_eq!(&*a.header.path_bytes(), b"a");
             let mut s = String::new();
-            a.obj.read_to_string(&mut s).unwrap();
+            a.read_to_string(&mut s).unwrap();
             assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
         }
 
@@ -151,7 +163,7 @@ mod tests {
             let mut b = entries.next().expect("expected entry b present").unwrap();
             assert_eq!(&*b.header.path_bytes(), b"b");
             let mut s = String::new();
-            b.obj.read_to_string(&mut s).unwrap();
+            b.read_to_string(&mut s).unwrap();
             assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
         }
 
@@ -181,7 +193,7 @@ mod tests {
                 s.spawn(|| {
                     assert_eq!(&*a.header.path_bytes(), b"a");
                     let mut s = String::new();
-                    a.obj.read_to_string(&mut s).unwrap();
+                    a.read_to_string(&mut s).unwrap();
                     assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
                 });
             });
@@ -193,7 +205,7 @@ mod tests {
                 let mut b = entries.next().expect("expected entry b present").unwrap();
                 assert_eq!(&*b.header.path_bytes(), b"b");
                 let mut s = String::new();
-                b.obj.read_to_string(&mut s).unwrap();
+                b.read_to_string(&mut s).unwrap();
                 assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
             });
         });
