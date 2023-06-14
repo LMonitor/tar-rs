@@ -1,5 +1,5 @@
-use std::io::{self, Read};
 use crate::{other, Header};
+use std::io::{self, Read};
 
 /// Tar archive reader with slightly relaxed semantics
 ///
@@ -17,7 +17,7 @@ pub struct SimpleEntries<R> {
 
 impl<R: Read> SimpleEntries<R> {
     /// SimpleEntries constructor
-    pub fn new(obj: R) -> Self {
+    pub(crate) fn new(obj: R) -> Self {
         Self {
             obj,
             ignore_zeros: false,
@@ -134,11 +134,14 @@ fn try_read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Archive;
+    use std::fs::File;
 
     /* fails to compile - good!
     #[test]
     fn test_multiple_entries_not_allowed() {
-        let mut entries = SimpleEntries::new(&[][..]);
+        let input = File::open("tests/archives/reading_files.tar").unwrap();
+        let mut entries = Archive::new(input).into_entries();
         let e1 = entries.next();
         let e2 = entries.next();
         drop(e1);
@@ -148,8 +151,8 @@ mod tests {
 
     #[test]
     fn test_usage() {
-        let input = std::fs::File::open("tests/archives/reading_files.tar").unwrap();
-        let mut entries = SimpleEntries::new(input);
+        let input = File::open("tests/archives/reading_files.tar").unwrap();
+        let mut entries = Archive::new(input).into_entries();
 
         {
             let mut a = entries.next().expect("expected entry a present").unwrap();
@@ -175,15 +178,15 @@ mod tests {
         fn require_send_sync_static<T: Send + Sync + 'static>(_: T) {}
 
         let input: &'static [u8] = &[][..];
-        require_send_sync_static(SimpleEntries::new(input));
+        require_send_sync_static(Archive::new(input).into_entries());
     }
 
     #[test]
     fn test_scoped_threads() {
         use std::thread;
 
-        let input = std::fs::File::open("tests/archives/reading_files.tar").unwrap();
-        let mut entries = SimpleEntries::new(input);
+        let input = File::open("tests/archives/reading_files.tar").unwrap();
+        let mut entries = Archive::new(input).into_entries();
 
         // test 1: move the entry into a scoped thread
         {

@@ -84,6 +84,12 @@ impl<R: Read> Archive<R> {
         })
     }
 
+    /// Construct an iterator over the entries in this archive that owns the underlying Read
+    /// object (instead [`Archive::entries`] that borrows the reader).
+    pub fn into_entries(self) -> crate::SimpleEntries<R> {
+        crate::SimpleEntries::new(self.into_inner())
+    }
+
     /// Unpacks the contents tarball into the specified `dst`.
     ///
     /// This function will iterate over the entire contents of this tarball,
