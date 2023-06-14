@@ -39,6 +39,8 @@ mod error;
 mod header;
 mod pax;
 
+pub mod simple_entries;
+
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)
 }
