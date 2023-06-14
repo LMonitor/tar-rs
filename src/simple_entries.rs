@@ -1,10 +1,7 @@
 //! Tar archive reader with slightly relaxed semantics (Send, LendingIterator)
 
-use std::io;
-use std::io::prelude::*;
-
-use crate::other;
-use crate::Header;
+use std::io::{self, Read};
+use crate::{other, Header};
 
 /// Simple tar entries reader
 pub struct SimpleEntries<R> {
@@ -34,25 +31,6 @@ pub struct SimpleEntry<'a, R: Read> {
     pub size: u64,
 }
 
-/// Iterator LendingIterator which permit to iterate over items but where the data may be stored within the iterator itself
-pub trait LendingIterator {
-    /// The type of the elements being iterated over
-    type Item<'a>
-    where
-        Self: 'a;
-
-    /// Advances the iterator and returns the next value
-    fn next(&mut self) -> Option<Self::Item<'_>>;
-}
-
-impl<R: Read> LendingIterator for SimpleEntries<R> {
-    type Item<'a> = io::Result<SimpleEntry<'a, R>> where R: 'a, Self: 'a;
-
-    fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.next_entry_raw().transpose()
-    }
-}
-
 impl<'a, R: Read> Drop for SimpleEntry<'a, R> {
     fn drop(&mut self) {
         // exhaust reader so the reader position is at the next entry in tar
@@ -66,6 +44,11 @@ impl<'a, R: Read> Drop for SimpleEntry<'a, R> {
 }
 
 impl<R: Read> SimpleEntries<R> {
+    /// Get the next tar entry
+    pub fn next(&mut self) -> Option<io::Result<SimpleEntry<'_, R>>> {
+        self.next_entry_raw().transpose()
+    }
+
     fn next_entry_raw(&mut self) -> io::Result<Option<SimpleEntry<'_, R>>> {
         // skip over padding
         if !try_read_all(&mut self.obj, &mut [0; 512][..self.padding])? {
