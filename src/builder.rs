@@ -40,6 +40,9 @@ impl<W: Write> Builder<W> {
 
     /// Follow symlinks, archiving the contents of the file they point to rather
     /// than adding a symlink to the archive. Defaults to true.
+    ///
+    /// When true, it exhibits the same behavior as GNU `tar` command's
+    /// `--dereference` or `-h` options <https://man7.org/linux/man-pages/man1/tar.1.html>.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
     }
@@ -360,7 +363,8 @@ impl<W: Write> Builder<W> {
     /// operation then this may corrupt the archive.
     ///
     /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
+    /// `finish` or `into_inner` function needs to be called to finish
+    /// writing the archive.
     ///
     /// # Examples
     ///
@@ -370,9 +374,39 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Use the directory at one location ("."), but insert it into the archive
+    /// // with a different name ("bardir").
     /// ar.append_dir_all("bardir", ".").unwrap();
+    /// ar.finish().unwrap();
+    /// ```
+    ///
+    /// Use `append_dir_all` with an empty string as the first path argument to
+    /// create an archive from all files in a directory without renaming.
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::PathBuf;
+    /// use tar::{Archive, Builder};
+    ///
+    /// let tmpdir = tempfile::tempdir().unwrap();
+    /// let path = tmpdir.path();
+    /// fs::write(path.join("a.txt"), b"hello").unwrap();
+    /// fs::write(path.join("b.txt"), b"world").unwrap();
+    ///
+    /// // Create a tarball from the files in the directory
+    /// let mut ar = Builder::new(Vec::new());
+    /// ar.append_dir_all("", path).unwrap();
+    ///
+    /// // List files in the archive
+    /// let archive = ar.into_inner().unwrap();
+    /// let archived_files = Archive::new(archive.as_slice())
+    ///     .entries()
+    ///     .unwrap()
+    ///     .map(|entry| entry.unwrap().path().unwrap().into_owned())
+    ///     .collect::<Vec<_>>();
+    ///
+    /// assert!(archived_files.contains(&PathBuf::from("a.txt")));
+    /// assert!(archived_files.contains(&PathBuf::from("b.txt")));
     /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
     where

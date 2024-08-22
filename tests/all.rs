@@ -421,6 +421,43 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
+fn writing_and_extracting_directories_complex_permissions() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    // Archive with complex permissions which would fail to unpack if one attempted to do so
+    // without reordering of entries.
+    let mut ar = Builder::new(Vec::new());
+    let tmppath = td.path().join("tmpfile");
+    t!(t!(File::create(&tmppath)).write_all(b"c"));
+
+    // Root dir with very stringent permissions
+    let data: &[u8] = &[];
+    let mut header = Header::new_gnu();
+    header.set_mode(0o555);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested dir
+    header.set_mode(0o777);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a/b"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested file.
+    t!(ar.append_file("a/c", &mut t!(File::open(&tmppath))));
+    t!(ar.finish());
+
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    ar.unpack(td.path()).unwrap();
+    check_dirtree(&td);
+}
+
+#[test]
 fn writing_directories_recursively() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -1121,6 +1158,18 @@ fn extract_sparse() {
 }
 
 #[test]
+fn large_sparse() {
+    let rdr = Cursor::new(tar!("sparse-large.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+    // Only check the header info without extracting, as the file is very large,
+    // and not all filesystems support sparse files.
+    let a = t!(entries.next().unwrap());
+    let h = a.header().as_gnu().unwrap();
+    assert_eq!(h.real_size().unwrap(), 12626929280);
+}
+
+#[test]
 fn sparse_with_trailing() {
     let rdr = Cursor::new(tar!("sparse-1.tar"));
     let mut ar = Archive::new(rdr);
@@ -1386,10 +1435,7 @@ fn tar_directory_containing_special_files() {
     // append_path has a different logic for processing files, so we need to test it as well
     t!(ar.append_path("fifo"));
     t!(ar.append_dir_all("special", td.path()));
-    // unfortunately, block device file cannot be created by non-root users
-    // as a substitute, just test the file that exists on most Unix systems
     t!(env::set_current_dir("/dev/"));
-    t!(ar.append_path("loop0"));
     // CI systems seem to have issues with creating a chr device
     t!(ar.append_path("null"));
     t!(ar.finish());
@@ -1462,6 +1508,20 @@ fn ownership_preserving() {
     t!(header.set_path("iamuid580800002"));
     header.set_cksum();
     t!(ar.append(&header, data));
+    // directory 1 with uid = 580800002, gid = 580800002
+    header.set_entry_type(EntryType::Directory);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800002dir"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    // symlink to file 1
+    header.set_entry_type(EntryType::Symlink);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800000symlink"));
+    header.set_cksum();
+    t!(ar.append_link(&mut header, "iamuid580800000symlink", "iamuid580800000"));
     t!(ar.finish());
 
     let rdr = Cursor::new(t!(ar.into_inner()));
@@ -1470,18 +1530,24 @@ fn ownership_preserving() {
     ar.set_preserve_ownerships(true);
 
     if unsafe { libc::getuid() } == 0 {
-        assert!(ar.unpack(td.path()).is_ok());
+        ar.unpack(td.path()).unwrap();
         // validate against premade files
         // iamuid580800001 has this ownership: 580800001:580800000
-        let meta = std::fs::metadata(td.path().join("iamuid580800000")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000")).unwrap();
         assert_eq!(meta.uid(), 580800000);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800001")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800001")).unwrap();
         assert_eq!(meta.uid(), 580800001);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800002")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002")).unwrap();
         assert_eq!(meta.uid(), 580800002);
         assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002dir")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000symlink")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002)
     } else {
         // it's not possible to unpack tar while preserving ownership
         // without root permissions
